@@ -17,6 +17,23 @@
 
 网页会自动完成兼容握手；相机出现“连接应用程序”提示时，在相机上点击确认，页面会继续读取目录。
 
+## macOS 桌面版
+
+在 Apple Silicon Mac 上运行：
+
+```bash
+npm install
+npm run macos
+```
+
+这会打开独立的 `GF10 Photo Desk` 窗口，并在本机启动照片桥接服务。需要生成可双击的 `.app` 时运行：
+
+```bash
+npm run package:mac
+```
+
+生成位置为 `release/GF10 Photo Desk-darwin-arm64/GF10 Photo Desk.app`。该桌面版的本地服务只监听本机；如果要让手机也访问，请继续使用上面的 `npm run local` 方式。
+
 ## 说明
 
 - 这是本地网页，不会把相机地址或照片上传到互联网。

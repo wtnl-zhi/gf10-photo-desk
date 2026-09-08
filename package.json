@@ -1,5 +1,7 @@
 {
-  "name": "sites-project",
+  "name": "gf10-photo-desk",
+  "productName": "GF10 Photo Desk",
+  "main": "desktop/main.cjs",
   "version": "0.1.0",
   "private": true,
   "engines": {
@@ -8,6 +10,8 @@
   "scripts": {
     "dev": "vinext dev",
     "local": "vinext dev --host 0.0.0.0 --port 4173",
+    "macos": "electron desktop/main.cjs",
+    "package:mac": "node desktop/package-mac.cjs",
     "build": "vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "lint": "oxlint",
@@ -18,6 +22,10 @@
     "react-dom": "19.2.6",
     "react-server-dom-webpack": "19.2.6",
     "vinext": "1.0.0-beta.5",
+    "vite": "8.0.13",
+    "@tailwindcss/postcss": "4.2.1",
+    "@vitejs/plugin-react": "6.0.2",
+    "@vitejs/plugin-rsc": "0.5.26",
     "@base-ui/react": "1.7.0",
     "@shadcn/react": "0.3.0",
     "class-variance-authority": "0.7.1",
@@ -38,19 +46,17 @@
     "@cloudflare/vite-plugin": "1.37.1",
     "@cloudflare/workers-types": "4.20260515.1",
     "@openai/sites-vite-plugin": "0.2.0",
-    "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
-    "@vitejs/plugin-react": "6.0.2",
-    "@vitejs/plugin-rsc": "0.5.26",
     "oxfmt": "0.61.0",
     "oxlint": "1.76.0",
     "oxlint-tsgolint": "7.0.2001",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
-    "vite": "8.0.13",
-    "wrangler": "4.92.0"
+    "wrangler": "4.92.0",
+    "electron": "39.2.7",
+    "electron-packager": "17.1.2"
   },
   "type": "module"
 }
