@@ -38,6 +38,7 @@ type CameraState = {
 };
 
 type ConnectionState = 'idle' | 'connecting' | 'waiting' | 'connected' | 'error';
+type DownloadFormat = 'jpeg' | 'raw';
 type ApiResponse = { ok?: boolean; error?: string; photos?: Photo[]; state?: CameraState; connection?: { accepted: boolean; raw: string; cameraName: string }; total?: number; cameraName?: string };
 
 const DEFAULT_IP = '192.168.54.1';
@@ -64,6 +65,10 @@ function cameraAsset(ip: string, file: string) {
   return `/api/media?ip=${encodeURIComponent(ip)}&file=${encodeURIComponent(file)}`;
 }
 
+function rawFileFor(file: string) {
+  return file.replace(/\.(?:JPG|JPEG)$/i, '.RW2');
+}
+
 function modelLabel(value: string) {
   const model = value.split(/[-_]/)[0];
   return model === 'GF10' ? 'DC-GF10' : model || '';
@@ -80,6 +85,7 @@ export default function Home() {
   const [error, setError] = useState('');
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [downloadLoading, setDownloadLoading] = useState(false);
+  const [downloadFormat, setDownloadFormat] = useState<DownloadFormat>('raw');
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [compatibilityOpen, setCompatibilityOpen] = useState(false);
@@ -89,6 +95,7 @@ export default function Home() {
 
   const selectedCount = selected.size;
   const allSelected = photos.length > 0 && selectedCount === photos.length;
+  const selectedPhotos = photos.filter((photo) => selected.has(photo.id));
   const connected = connection === 'connected';
   const previewPhoto = previewIndex === null ? null : photos[previewIndex] ?? null;
 
@@ -200,14 +207,21 @@ export default function Home() {
   };
 
   const downloadSelected = async () => {
-    const files = photos.filter((photo) => selected.has(photo.id)).map((photo) => photo.originalFile);
-    if (!files.length) return;
+    if (!selectedPhotos.length) return;
     setDownloadLoading(true);
     setError('');
-    setNotice(`正在准备 ${files.length} 张原图…`);
+    const formatLabel = downloadFormat === 'raw' ? 'RAW' : 'JPG';
+    let fallbackCount = 0;
+    setNotice(`正在准备 ${selectedPhotos.length} 张 ${formatLabel} 原图…`);
     try {
-      for (const [index, file] of files.entries()) {
-        const response = await fetch(cameraAsset(ip, file));
+      for (const [index, photo] of selectedPhotos.entries()) {
+        let file = downloadFormat === 'raw' ? rawFileFor(photo.originalFile) : photo.originalFile;
+        let response = await fetch(cameraAsset(ip, file));
+        if (!response.ok && downloadFormat === 'raw' && file !== photo.originalFile) {
+          file = photo.originalFile;
+          response = await fetch(cameraAsset(ip, file));
+          fallbackCount += 1;
+        }
         if (!response.ok) throw new Error(`${file} 下载失败（HTTP ${response.status}）`);
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
@@ -218,10 +232,11 @@ export default function Home() {
         link.click();
         link.remove();
         window.setTimeout(() => URL.revokeObjectURL(url), 1200);
-        setNotice(`正在下载第 ${index + 1}/${files.length} 张图片…`);
+        setNotice(`正在下载第 ${index + 1}/${selectedPhotos.length} 张图片…`);
         await new Promise((resolve) => setTimeout(resolve, 180));
       }
-      setNotice(`已开始下载 ${files.length} 张图片文件`);
+      const fallbackLabel = fallbackCount ? `，${fallbackCount} 张无 RAW 已自动使用 JPG` : '';
+      setNotice(`已开始下载 ${selectedPhotos.length} 张 ${formatLabel} 文件${fallbackLabel}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : '批量下载失败');
       setNotice('下载未完成，请重试。');
@@ -278,7 +293,7 @@ export default function Home() {
 
       {catalogLoading && !photos.length ? <section className="empty-state loading-state"><LoaderCircle className="spin" size={26} /><strong>正在读取相机照片</strong><span>相机会先切换到回放模式，然后加载缩略图。</span></section> : photos.length ? <section className="photo-grid">{photos.map((photo, index) => { const isSelected = selected.has(photo.id); return <article className={`photo-card ${isSelected ? 'is-selected' : ''}`} key={photo.id}><button className="photo-image-button" type="button" onClick={() => setPreviewIndex(index)} aria-label={`预览 ${photo.title}`}><Image src={cameraAsset(ip, photo.thumbnailFile)} alt={photo.title} fill sizes="(max-width: 600px) 50vw, (max-width: 850px) 33vw, (max-width: 1150px) 25vw, 20vw" unoptimized /><span className="preview-overlay"><ImageIcon size={17} />预览</span></button><button className="card-check" type="button" aria-label={isSelected ? `取消选择 ${photo.title}` : `选择 ${photo.title}`} onClick={() => togglePhoto(photo.id)}><span>{isSelected && <Check size={13} />}</span></button><div className="photo-meta"><div><strong>{photo.title}</strong><span>{formatDate(photo.date)}</span></div><small>{formatBytes(photo.size)}</small></div></article>; })}</section> : <section className="empty-state"><div className="empty-icon"><ImageIcon size={24} /></div><strong>还没有照片目录</strong><span>打开右上角“连接设置”，确认相机已连接 GF10 Wi-Fi。</span><button className="button primary" type="button" onClick={() => setSettingsOpen(true)}><Wifi size={16} />开始连接</button></section>}
 
-      <section className="download-dock" aria-label="图片下载栏"><div className="download-dock-inner"><div className="download-dock-copy"><HardDriveDownload size={18} /><div><strong>{selectedCount ? `已选择 ${selectedCount} 张图片` : '还没有选择图片'}</strong><span>{selectedCount ? '将逐张下载原图文件，不打包 ZIP' : '勾选照片后可在这里直接下载'}</span></div></div><div className="download-dock-actions"><button className="button secondary" type="button" onClick={() => setSelected(new Set())} disabled={!selectedCount || downloadLoading}>清空选择</button><button className="button primary" type="button" onClick={() => void downloadSelected()} disabled={!selectedCount || downloadLoading}>{downloadLoading ? <LoaderCircle className="spin" size={16} /> : <HardDriveDownload size={16} />}<span>{downloadLoading ? '下载中…' : '下载图片'}</span>{selectedCount > 0 && <b>{selectedCount}</b>}</button></div></div></section>
+      <section className="download-dock" aria-label="图片下载栏"><div className="download-dock-inner"><div className="download-dock-copy"><HardDriveDownload size={18} /><div><strong>{selectedCount ? `已选择 ${selectedCount} 张图片` : '还没有选择图片'}</strong><span>{selectedCount ? (downloadFormat === 'raw' ? '优先下载 RW2，没有 RAW 自动使用 JPG' : '将逐张下载 JPG 原图文件') : '勾选照片后可在这里直接下载'}</span></div></div><div className="download-format-toggle" aria-label="下载格式"><button className={downloadFormat === 'jpeg' ? 'active' : ''} type="button" aria-pressed={downloadFormat === 'jpeg'} onClick={() => setDownloadFormat('jpeg')} disabled={downloadLoading}>JPG</button><button className={downloadFormat === 'raw' ? 'active' : ''} type="button" aria-pressed={downloadFormat === 'raw'} onClick={() => setDownloadFormat('raw')} disabled={downloadLoading}>RAW</button></div><div className="download-dock-actions"><button className="button secondary" type="button" onClick={() => setSelected(new Set())} disabled={!selectedCount || downloadLoading}>清空选择</button><button className="button primary" type="button" onClick={() => void downloadSelected()} disabled={!selectedCount || downloadLoading}>{downloadLoading ? <LoaderCircle className="spin" size={16} /> : <HardDriveDownload size={16} />}<span>{downloadLoading ? '下载中…' : `下载 ${downloadFormat === 'raw' ? 'RAW' : 'JPG'}`}</span>{selectedCount > 0 && <b>{selectedCount}</b>}</button></div></div></section>
       <footer className="footer-note"><span className="live-dot" />本地连接 · 只读访问 · 不修改相机内容</footer>
 
       {previewPhoto && previewIndex !== null && <dialog open className="lightbox" aria-label="照片预览"><div className="lightbox-inner"><div className="lightbox-bar"><div><strong>{previewPhoto.title}</strong><span>{formatBytes(previewPhoto.size)} · {formatDate(previewPhoto.date)}</span></div><button className="icon-button" type="button" onClick={() => setPreviewIndex(null)} aria-label="关闭预览"><X size={20} /></button></div><div className="lightbox-image-wrap"><Image src={cameraAsset(ip, previewPhoto.previewFile)} alt={previewPhoto.title} width={1600} height={1200} unoptimized /></div><div className="lightbox-controls"><button className="icon-button" type="button" disabled={previewIndex <= 0} onClick={() => setPreviewIndex((index) => index === null ? null : Math.max(0, index - 1))} aria-label="上一张"><ChevronLeft size={20} /></button><span>{previewIndex + 1} / {photos.length}</span><button className="icon-button" type="button" disabled={previewIndex >= photos.length - 1} onClick={() => setPreviewIndex((index) => index === null ? null : Math.min(photos.length - 1, index + 1))} aria-label="下一张"><ChevronRight size={20} /></button></div></div></dialog>}
