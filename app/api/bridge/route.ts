@@ -1,4 +1,4 @@
-import { catalog, downloadZip, getState, handshake, normalizeCameraIp, normalizeMediaFile } from '@/lib/gf10';
+import { catalog, getState, handshake, normalizeCameraIp } from '@/lib/gf10';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,20 +24,6 @@ export async function GET(request: Request) {
     if (action === 'state') return json({ ok: true, state: await getState(ip) });
     if (action === 'catalog') return json({ ok: true, ...(await catalog(ip)) });
     return json({ ok: true, service: 'GF10 Photo Desk' });
-  } catch (error) {
-    return json({ ok: false, error: errorMessage(error) }, 502);
-  }
-}
-
-export async function POST(request: Request) {
-  const url = new URL(request.url);
-  if (url.searchParams.get('action') !== 'download') return json({ ok: false, error: '不支持的操作' }, 405);
-  try {
-    const ip = normalizeCameraIp(url.searchParams.get('ip'));
-    const body = await request.json() as { files?: unknown };
-    const files = Array.isArray(body.files) ? body.files.map((file) => normalizeMediaFile(typeof file === 'string' ? file : '')).filter((file) => file.startsWith('DO')) : [];
-    const zip = await downloadZip(ip, files);
-    return new Response(zip as BodyInit, { status: 200, headers: { 'Content-Type': 'application/zip', 'Content-Length': String(zip.byteLength), 'Content-Disposition': 'attachment; filename="GF10-photos.zip"', 'Cache-Control': 'no-store' } });
   } catch (error) {
     return json({ ok: false, error: errorMessage(error) }, 502);
   }

@@ -105,8 +105,12 @@ export default function Home() {
     setNotice('正在读取相机目录…');
     try {
       const data = await api(`/api/bridge?action=catalog&ip=${encodeURIComponent(ip)}`);
-      setPhotos(data.photos ?? []);
-      setSelected(new Set());
+      const nextPhotos = data.photos ?? [];
+      setPhotos(nextPhotos);
+      setSelected((current) => {
+        const available = new Set(nextPhotos.map((photo) => photo.id));
+        return new Set([...current].filter((id) => available.has(id)));
+      });
       setCameraState(data.state ?? null);
       if (data.cameraName) setDetectedModel(modelLabel(data.cameraName));
       setConnection('connected');
@@ -119,16 +123,18 @@ export default function Home() {
     }
   }, [api, ip]);
 
-  const pollState = useCallback(async () => {
+  const pollState = useCallback(async (reloadCatalog = false) => {
     try {
       const data = await api(`/api/bridge?action=state&ip=${encodeURIComponent(ip)}`);
       setCameraState(data.state ?? null);
       if (data.state?.result === 'ok') {
         setConnection('connected');
-        setNotice('相机已确认，正在准备照片目录…');
         if (pollRef.current) clearInterval(pollRef.current);
         pollRef.current = null;
-        void loadCatalog();
+        if (reloadCatalog) {
+          setNotice('相机已确认，正在准备照片目录…');
+          void loadCatalog();
+        }
       }
     } catch {
       // The camera can take a few seconds to accept a pairing request.
@@ -157,7 +163,7 @@ export default function Home() {
       setConnection('waiting');
       setNotice('请在相机屏幕上确认“连接应用程序”，页面会自动继续。');
       if (pollRef.current) clearInterval(pollRef.current);
-      pollRef.current = setInterval(() => void pollState(), 1800);
+      pollRef.current = setInterval(() => void pollState(true), 1800);
     } catch (err) {
       setConnection('error');
       setError(err instanceof Error ? err.message : '无法连接相机');
@@ -171,7 +177,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!connected) return;
-    const timer = setInterval(() => void pollState(), 7000);
+    const timer = setInterval(() => void pollState(false), 7000);
     return () => clearInterval(timer);
   }, [connected, pollState]);
 
@@ -198,27 +204,24 @@ export default function Home() {
     if (!files.length) return;
     setDownloadLoading(true);
     setError('');
-    setNotice(`正在打包 ${files.length} 张原图…`);
+    setNotice(`正在准备 ${files.length} 张原图…`);
     try {
-      const response = await fetch(`/api/bridge?action=download&ip=${encodeURIComponent(ip)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files }),
-      });
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({})) as ApiResponse;
-        throw new Error(data.error || '下载失败');
+      for (const [index, file] of files.entries()) {
+        const response = await fetch(cameraAsset(ip, file));
+        if (!response.ok) throw new Error(`${file} 下载失败（HTTP ${response.status}）`);
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = file;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1200);
+        setNotice(`正在下载第 ${index + 1}/${files.length} 张图片…`);
+        await new Promise((resolve) => setTimeout(resolve, 180));
       }
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `GF10-${new Date().toISOString().slice(0, 10)}.zip`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-      setNotice(`已开始下载 ${files.length} 张原图`);
+      setNotice(`已开始下载 ${files.length} 张图片文件`);
     } catch (err) {
       setError(err instanceof Error ? err.message : '批量下载失败');
       setNotice('下载未完成，请重试。');
@@ -253,7 +256,7 @@ export default function Home() {
       </header>
 
       <section className="hero-row">
-        <div><p className="section-kicker">WIRELESS PHOTO BROWSER</p><h2>从相机到屏幕，<span>只看照片。</span></h2><p className="hero-copy">连接 GF10 的 Wi-Fi 后，预览缩略图、挑选照片，并把原图一次性打包下载。</p>{detectedModel && <p className="detected-line"><span className="live-dot" />当前识别：{detectedModel}{verifiedModels.includes(detectedModel) ? ' · 本机已验证' : ''}</p>}</div>
+        <div><p className="section-kicker">WIRELESS PHOTO BROWSER</p><h2>从相机到屏幕，<span>只看照片。</span></h2><p className="hero-copy">连接 GF10 的 Wi-Fi 后，预览缩略图、挑选照片，并将原图逐张下载到电脑或手机。</p>{detectedModel && <p className="detected-line"><span className="live-dot" />当前识别：{detectedModel}{verifiedModels.includes(detectedModel) ? ' · 本机已验证' : ''}</p>}</div>
         <div className="hero-metrics"><div><strong>{photos.length || '—'}</strong><span>相机照片</span></div><div><strong>{selectedCount || '—'}</strong><span>已选择</span></div><div><strong>8.1</strong><span>Mbps 实测</span></div></div>
       </section>
 
@@ -271,10 +274,11 @@ export default function Home() {
       <section className="status-strip" aria-live="polite"><div className="status-message">{connection === 'waiting' ? <LoaderCircle className="spin" size={15} /> : connection === 'connected' ? <Check size={15} /> : <Wifi size={15} />}<span>{notice}</span></div><div className="status-details">{cameraState?.batt && <span>电量 {cameraState.batt}</span>}{cameraState?.cammode && <span>模式 {cameraState.cammode === 'play' ? '回放' : cameraState.cammode}</span>}{cameraState?.version && <span>固件 {cameraState.version}</span>}</div></section>
       {error && <div className="error-banner"><X size={15} />{error}</div>}
 
-      <section className="toolbar"><div className="toolbar-left"><button className={`select-toggle ${allSelected ? 'active' : ''}`} type="button" onClick={toggleAll} disabled={!photos.length}><span className="checkbox-box">{allSelected && <Check size={13} />}</span><span>{allSelected ? '取消全选' : '全选'}</span></button><span className="toolbar-count">{selectedCount ? `已选择 ${selectedCount} 张` : `${photos.length || 0} 张照片`}</span></div><div className="toolbar-right"><button className="button secondary refresh-button" type="button" onClick={() => void loadCatalog()} disabled={!connected || catalogLoading}><RefreshCw className={catalogLoading ? 'spin' : ''} size={16} /><span>刷新</span></button><button className="button primary download-button" type="button" onClick={() => void downloadSelected()} disabled={!selectedCount || downloadLoading}>{downloadLoading ? <LoaderCircle className="spin" size={16} /> : <HardDriveDownload size={16} />}<span>{downloadLoading ? '打包中…' : '下载原图'}</span>{selectedCount > 0 && <b>{selectedCount}</b>}</button></div></section>
+      <section className="toolbar"><div className="toolbar-left"><button className={`select-toggle ${allSelected ? 'active' : ''}`} type="button" onClick={toggleAll} disabled={!photos.length}><span className="checkbox-box">{allSelected && <Check size={13} />}</span><span>{allSelected ? '取消全选' : '全选'}</span></button><span className="toolbar-count">{selectedCount ? `已选择 ${selectedCount} 张` : `${photos.length || 0} 张照片`}</span></div><div className="toolbar-right"><button className="button secondary refresh-button" type="button" onClick={() => void loadCatalog()} disabled={!connected || catalogLoading}><RefreshCw className={catalogLoading ? 'spin' : ''} size={16} /><span>刷新</span></button></div></section>
 
       {catalogLoading && !photos.length ? <section className="empty-state loading-state"><LoaderCircle className="spin" size={26} /><strong>正在读取相机照片</strong><span>相机会先切换到回放模式，然后加载缩略图。</span></section> : photos.length ? <section className="photo-grid">{photos.map((photo, index) => { const isSelected = selected.has(photo.id); return <article className={`photo-card ${isSelected ? 'is-selected' : ''}`} key={photo.id}><button className="photo-image-button" type="button" onClick={() => setPreviewIndex(index)} aria-label={`预览 ${photo.title}`}><Image src={cameraAsset(ip, photo.thumbnailFile)} alt={photo.title} fill sizes="(max-width: 600px) 50vw, (max-width: 850px) 33vw, (max-width: 1150px) 25vw, 20vw" unoptimized /><span className="preview-overlay"><ImageIcon size={17} />预览</span></button><button className="card-check" type="button" aria-label={isSelected ? `取消选择 ${photo.title}` : `选择 ${photo.title}`} onClick={() => togglePhoto(photo.id)}><span>{isSelected && <Check size={13} />}</span></button><div className="photo-meta"><div><strong>{photo.title}</strong><span>{formatDate(photo.date)}</span></div><small>{formatBytes(photo.size)}</small></div></article>; })}</section> : <section className="empty-state"><div className="empty-icon"><ImageIcon size={24} /></div><strong>还没有照片目录</strong><span>打开右上角“连接设置”，确认相机已连接 GF10 Wi-Fi。</span><button className="button primary" type="button" onClick={() => setSettingsOpen(true)}><Wifi size={16} />开始连接</button></section>}
 
+      <section className="download-dock" aria-label="图片下载栏"><div className="download-dock-inner"><div className="download-dock-copy"><HardDriveDownload size={18} /><div><strong>{selectedCount ? `已选择 ${selectedCount} 张图片` : '还没有选择图片'}</strong><span>{selectedCount ? '将逐张下载原图文件，不打包 ZIP' : '勾选照片后可在这里直接下载'}</span></div></div><div className="download-dock-actions"><button className="button secondary" type="button" onClick={() => setSelected(new Set())} disabled={!selectedCount || downloadLoading}>清空选择</button><button className="button primary" type="button" onClick={() => void downloadSelected()} disabled={!selectedCount || downloadLoading}>{downloadLoading ? <LoaderCircle className="spin" size={16} /> : <HardDriveDownload size={16} />}<span>{downloadLoading ? '下载中…' : '下载图片'}</span>{selectedCount > 0 && <b>{selectedCount}</b>}</button></div></div></section>
       <footer className="footer-note"><span className="live-dot" />本地连接 · 只读访问 · 不修改相机内容</footer>
 
       {previewPhoto && previewIndex !== null && <dialog open className="lightbox" aria-label="照片预览"><div className="lightbox-inner"><div className="lightbox-bar"><div><strong>{previewPhoto.title}</strong><span>{formatBytes(previewPhoto.size)} · {formatDate(previewPhoto.date)}</span></div><button className="icon-button" type="button" onClick={() => setPreviewIndex(null)} aria-label="关闭预览"><X size={20} /></button></div><div className="lightbox-image-wrap"><Image src={cameraAsset(ip, previewPhoto.previewFile)} alt={previewPhoto.title} width={1600} height={1200} unoptimized /></div><div className="lightbox-controls"><button className="icon-button" type="button" disabled={previewIndex <= 0} onClick={() => setPreviewIndex((index) => index === null ? null : Math.max(0, index - 1))} aria-label="上一张"><ChevronLeft size={20} /></button><span>{previewIndex + 1} / {photos.length}</span><button className="icon-button" type="button" disabled={previewIndex >= photos.length - 1} onClick={() => setPreviewIndex((index) => index === null ? null : Math.min(photos.length - 1, index + 1))} aria-label="下一张"><ChevronRight size={20} /></button></div></div></dialog>}

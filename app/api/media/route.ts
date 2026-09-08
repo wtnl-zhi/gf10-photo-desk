@@ -1,4 +1,4 @@
-import { cameraMedia, normalizeCameraIp, normalizeMediaFile } from '@/lib/gf10';
+import { cameraMedia, ensureSession, normalizeCameraIp, normalizeMediaFile } from '@/lib/gf10';
 
 export const dynamic = 'force-dynamic';
 
@@ -7,6 +7,7 @@ export async function GET(request: Request) {
   try {
     const ip = normalizeCameraIp(url.searchParams.get('ip'));
     const file = normalizeMediaFile(url.searchParams.get('file'));
+    await ensureSession(ip);
     const upstream = await cameraMedia(ip, file, request.headers.get('range') || undefined);
     const headers = new Headers();
     for (const name of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified']) {

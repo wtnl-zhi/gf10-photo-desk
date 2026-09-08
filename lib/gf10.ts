@@ -164,7 +164,7 @@ export async function handshake(ip: string) {
   return { accepted, raw, cameraName: fields[1] || '' };
 }
 
-async function ensureSession(ip: string) {
+export async function ensureSession(ip: string) {
   const session = sessions.get(ip);
   if (!session || Date.now() - session.lastActivity > 11_000) await handshake(ip);
 }
@@ -209,48 +209,4 @@ export async function catalog(ip: string) {
     if (!page.numberReturned || photos.length >= page.totalMatches) break;
   }
   return { photos, total: total || photos.length, state, cameraName: sessions.get(ip)?.cameraName || '' };
-}
-
-function crc32(bytes: Uint8Array) {
-  let crc = 0xffffffff;
-  for (const byte of bytes) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit++) crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
-function u16(value: number) { return new Uint8Array([value & 255, value >>> 8 & 255]); }
-function u32(value: number) { return new Uint8Array([value & 255, value >>> 8 & 255, value >>> 16 & 255, value >>> 24 & 255]); }
-function concat(parts: Uint8Array[]) { const length = parts.reduce((total, part) => total + part.length, 0); const output = new Uint8Array(length); let offset = 0; for (const part of parts) { output.set(part, offset); offset += part.length; } return output; }
-
-export function makeZip(files: Array<{ name: string; data: Uint8Array }>) {
-  const encoder = new TextEncoder();
-  const local: Uint8Array[] = [];
-  const central: Uint8Array[] = [];
-  let offset = 0;
-  for (const file of files) {
-    const name = encoder.encode(file.name);
-    const crc = crc32(file.data);
-    const header = concat([u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0), u32(crc), u32(file.data.length), u32(file.data.length), u16(name.length), u16(0), name, file.data]);
-    local.push(header);
-    central.push(concat([u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0), u32(crc), u32(file.data.length), u32(file.data.length), u16(name.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(offset), name]));
-    offset += header.length;
-  }
-  const localBytes = concat(local);
-  const centralBytes = concat(central);
-  return concat([localBytes, centralBytes, u32(0x06054b50), u16(0), u16(0), u16(files.length), u16(files.length), u32(centralBytes.length), u32(localBytes.length), u16(0)]);
-}
-
-export async function downloadZip(ip: string, fileNames: string[]) {
-  if (!fileNames.length) throw new Error('没有选择照片');
-  if (fileNames.length > 40) throw new Error('一次最多下载 40 张，避免相机和手机内存压力过大。');
-  await ensureSession(ip);
-  const files: Array<{ name: string; data: Uint8Array }> = [];
-  for (const file of fileNames) {
-    const response = await cameraMedia(ip, file);
-    if (!response.ok) throw new Error(`${file} 下载失败（HTTP ${response.status}）`);
-    files.push({ name: file, data: new Uint8Array(await response.arrayBuffer()) });
-  }
-  return makeZip(files);
 }
